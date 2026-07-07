@@ -1,0 +1,51 @@
+name: Daily WHOOP Pull
+
+on:
+  schedule:
+    - cron: "0 13 * * *"  # 9am ET daily (adjust for your timezone)
+  workflow_dispatch: {}    # lets you trigger it manually from the Actions tab
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore refresh token
+        run: |
+          echo '${{ secrets.WHOOP_TOKENS_JSON }}' > tokens.json
+
+      - name: Pull latest WHOOP data
+        env:
+          WHOOP_CLIENT_ID: ${{ secrets.WHOOP_CLIENT_ID }}
+          WHOOP_CLIENT_SECRET: ${{ secrets.WHOOP_CLIENT_SECRET }}
+        run: python3 pull_data.py
+
+      - name: Validate data
+        run: python3 validate.py
+
+      - name: Commit updated database
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add whoop.db
+          git diff --staged --quiet || git commit -m "Automated daily WHOOP data pull"
+          git push
+
+      # IMPORTANT: WHOOP rotates the refresh token every time it's used.
+      # The new one (written to tokens.json by pull_data.py) must be saved
+      # back to the WHOOP_TOKENS_JSON secret or the next run will fail.
+      # This requires a fine-grained PAT with "secrets: write" access on
+      # this repo, stored as REPO_PAT.
+      - name: Persist rotated refresh token
+        env:
+          GH_TOKEN: ${{ secrets.REPO_PAT }}
+        run: |
+          gh secret set WHOOP_TOKENS_JSON < tokens.json
